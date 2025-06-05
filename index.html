@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Eye tracking, on Apple Vision Pro</title>
+    <style>
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial,
+          sans-serif;
+        line-height: 1.6;
+        max-width: 800px;
+        margin: 0 auto;
+        padding: 2rem;
+        color: #333;
+        font-size: 18px;
+      }
+      h1 {
+        font-size: 2.8rem;
+        margin-bottom: 1.5rem;
+      }
+      h2 {
+        font-size: 2rem;
+        margin-top: 2rem;
+        margin-bottom: 1rem;
+      }
+      p {
+        margin-bottom: 1.2rem;
+      }
+      blockquote {
+        border-left: 4px solid #ddd;
+        margin: 1.5rem 0;
+        padding-left: 1rem;
+        color: #666;
+      }
+      code {
+        background: #f5f5f5;
+        padding: 0.2rem 0.4rem;
+        border-radius: 3px;
+        font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+      }
+      ul {
+        margin-bottom: 1.2rem;
+      }
+      li {
+        margin-bottom: 0.5rem;
+      }
+      hr {
+        border: none;
+        border-top: 1px solid #ddd;
+        margin: 2rem 0;
+      }
+      a {
+        color: #0066cc;
+        text-decoration: none;
+      }
+      a:hover {
+        text-decoration: underline;
+      }
+    </style>
+  </head>
+  <body>
+    <h1 id="eye-tracking-on-apple-vision-pro">Eye tracking, on Apple Vision Pro</h1>
+
+    <p>
+      Apple claims visionOS keeps your highly personal eye-tracking data private—except when you
+      click.
+    </p>
+    <p>
+      But I discovered that apps <i>can</i> infer where you are looking. Here's details, and proof
+      that you can try yourself.
+    </p>
+    <hr />
+    <p>
+      When Apple introduced visionOS they described it as carefully designed in a privacy-first way,
+      especially protecting data about where a user is looking. Here's how Apple describes the
+      motivation to protect this data, and what data is shared with apps:
+    </p>
+    <blockquote>
+      <p>
+        "Where you look is not shared with apps because the content we look at, and how long we look
+        at it, may reveal our thought process. visionOS processes eye movements at the system level,
+        and doesn't share where you are looking, or your eye input, with apps or websites before you
+        engage with content. As a result, apps and websites only know what content you select when
+        you tap your fingers together, not what you look at but don't select." (<a
+          href="https://www.apple.com/privacy/docs/Apple_Vision_Pro_Privacy_Overview.pdf"
+          >Apple Vision Pro Privacy Overview</a
+        >)
+      </p>
+    </blockquote>
+    <blockquote>
+      <p>
+        Apple Vision Pro's responsive, precision eye tracking is designed to protect your privacy. …
+        Your eye input is not shared with apps, websites, or Apple. (<a
+          href="https://www.apple.com/legal/privacy/data/en/eyes-hands/"
+          >source</a
+        >)
+      </p>
+    </blockquote>
+    <p>
+      In brief: the user's eye data is highly private, and it is not shared with apps and websites.
+    </p>
+    <p>
+      So, it was quite surprising when I found a way to partially infer this sensitive eye data, and
+      how incredibly easy it was to access.
+    </p>
+    <p>
+      I found it while making one of the most basic possible apps possible,
+      <strong>myIPD</strong> (<a href="#demo">demo</a> below), my app for showing a user their
+      Interpupillary Distance or IPD (the distance between their eye pupils). That's it: the app
+      just exists to show you a useful value.
+    </p>
+    <p>
+      To show that IPD value there is no direct <code>getUserIPD()</code> function on visionOS to
+      get it. However once in an immersive experience, there are APIs for getting each of the user's
+      eye positions relative to their head position. These APIs exist so that the rendering engine
+      running the experience can position the virtual left and right cameras for each eye properly,
+      matching the eyes of the user. Most apps don't need to look at this data but it's where I
+      would find the two values I needed.
+    </p>
+    <p>
+      The IPD is the sum of the left and right eye positions along the horizontal axis. Simplifying
+      the code (just a bit), you can get the user's IPD by:<br />
+         <code>IPD = leftEyePosition.x + rightEyePosition.x</code>
+    </p>
+    <p>
+      That worked, and I was able to display the user's IPD. But I remembered that many people have
+      an asymmetric IPD (the distance from the nose to the left eye pupil doesn't match the distance
+      to the right eye pupil), so I wanted to also display those left and right eye values.
+    </p>
+    <p>
+      When looking at those values being output every frame, I noticed that the data was,
+      unexpectedly, changing:
+    </p>
+    <ul>
+      <li>
+        When I looked to the left, the data changed: the <code>leftEyePosition.x</code> increased
+        (and <code>rightEyePosition.x</code> decreased)
+      </li>
+      <li>
+        When I looked to the right, the data changed: the <code>leftEyePosition.x</code> decreased
+        (and <code>rightEyePosition.x</code> increased)
+      </li>
+      <li>Similarly for looking up and down</li>
+    </ul>
+    <p>
+      Uh oh. It wasn't changing in some random way, but in a very specific, deterministic way. And
+      the key point is it's <strong>reversible</strong>:
+    </p>
+    <ul>
+      <li><code>leftEyePosition.x</code> increases → the user is looking left</li>
+      <li><code>leftEyePosition.x</code> increases more → the user looking more to the left</li>
+      <li><code>leftEyePosition.x</code> decreases → the user is looking right</li>
+    </ul>
+    <p>
+      The Vision Pro eye tracking system is tracking your eyes as they rotate, when the eyes rotate
+      the pupils position changes, and this position data is being provided to applications by
+      visionOS. An application with this data can infer where a user is looking by going in the
+      opposite direction. But an application on visionOS should NOT be able to figure out where a
+      user is looking, even if indirectly and imperfectly (and it is imperfect). This is where the
+      privacy violation exists.
+    </p>
+
+    <p>
+      While I have no desire to use this for any nefarious privacy violating purposes, but someone
+      else could.
+    </p>
+    <p>
+      In the myIPD <a href="#demo">demo</a> below I incorporated a basic version of detecting where
+      a user is looking. The app detects if a user is looking left or right by doing a basic
+      threshold comparison based on the baseline eye position values. You can't get simpler than
+      that.
+    </p>
+    <p>
+      I wonder how well some AI/ML techniques could do with this data to generate a more accurate
+      estimate of where a user is looking.
+    </p>
+    <h2 id="diagram">Diagram</h2>
+    <p>
+      Here is an interactive diagram of what is going on. Move the slider left and right to simulate
+      a user's eye gaze direction and the effect it has on the eye position data.
+    </p>
+    <p>
+      With the toggle on, this represents what visionOS is doing by updating the eye position data
+      as a user's gaze changes, and thus exposing the user's gaze. With the toggle off, this
+      represents what visionOS should be doing: not updating the eye position data provided to apps.
+    </p>
+    <iframe src="diagram.html" width="100%" height="990px" style="border: none"></iframe>
+    <h2 id="demo">Demo</h2>
+    <p>This is an Apple Vision Pro demo, so you will need a Vision Pro to try this.</p>
+    <p>
+      On a Vision Pro, open this link in Safari:
+      <a href="https://myipdinc.github.io/myipd/">myIPD</a>
+    </p>
+    <p>
+      It needs a little explanation currently. After entering VR, look with your eyes at the L
+      sphere for a few seconds, and then at the R sphere for a few seconds. This calibrates the
+      overall range of your eye movement. After that, looking to the left or right for some time
+      will trigger the corresponding sphere to be highlighted (This should be impossible on
+      visionOS). Also notice the graphs of the eye data over time. See the video below.
+    </p>
+    <p>
+      And of course it's 'myIPD': you can see your IPD to high accuracy, and also how asymmetric
+      your eyes are.
+    </p>
+    <h2 id="video">Video</h2>
+    <p><video src="myipd.mp4" width="100%" controls></video></p>
+    <h2 id="next">Next</h2>
+    <p>
+      Apple will likely want to fix this issue, and stop visionOS from continuing to update the
+      eye-related data after entering an immersive experience. (This is the equivalent of turning
+      the toggle 'off' in the diagram above.)
+    </p>
+    <p>
+      In the meantime, I'm working on the next version of myIPD, incorporating results of some
+      additional investigations.
+    </p>
+    <h2 id="contact">Questions</h2>
+    <p>Questions or comments? <a href="mailto:myipdinc@proton.me">myipdinc@proton.me</a></p>
+    <h2 id="misc">Misc</h2>
+    <ul>
+      <li>This issue was first discovered more than a year ago</li>
+      <li>
+        The demo here is a WebXR demo for easier sharing, but this issue was originally found in a
+        native visionOS application (think Metal, Unity, etc.)
+      </li>
+      <li>Some scenarios show a much higher data rate that you will see in the demo</li>
+    </ul>
+  </body>
+</html>

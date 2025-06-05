@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Diagram</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+      body {
+        font-family: 'Inter', sans-serif;
+      }
+
+      input[type='range']::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        appearance: none;
+        width: 20px;
+        height: 20px;
+        background: #3b82f6;
+        cursor: pointer;
+        border-radius: 50%;
+        margin-top: -7px;
+      }
+      input[type='range']::-moz-range-thumb {
+        width: 20px;
+        height: 20px;
+        background: #3b82f6;
+        cursor: pointer;
+        border-radius: 50%;
+        border: none;
+      }
+      .toggle-bg {
+        background-color: #d1d5db;
+        transition: background-color 0.3s ease;
+      }
+      .toggle-bg.checked {
+        background-color: #3b82f6;
+      }
+      .toggle-dot {
+        background-color: white;
+        transition: transform 0.3s ease;
+      }
+      .toggle-dot.checked {
+        transform: translateX(100%);
+      }
+    </style>
+  </head>
+  <body class="bg-gray-100 flex flex-col items-center justify-center min-h-screen p-4">
+    <div class="bg-white p-6 sm:p-8 rounded-xl shadow-2xl w-full max-w-lg">
+      <h1 class="text-2xl sm:text-3xl font-bold text-center text-gray-800 mb-2">
+        Eye Gaze Simulator (Top View)
+      </h1>
+
+      <div class="flex items-center justify-center my-4">
+        <label for="eyeDataToggle" class="flex items-center cursor-pointer">
+          <div class="relative">
+            <input type="checkbox" id="eyeDataToggle" class="sr-only" checked />
+            <div class="toggle-bg block w-14 h-8 rounded-full"></div>
+            <div class="toggle-dot absolute left-1 top-1 w-6 h-6 rounded-full"></div>
+          </div>
+          <div class="ml-3 text-sm font-medium text-gray-700" id="toggleLabel">
+            Eye data updated: ON
+          </div>
+        </label>
+      </div>
+
+      <canvas id="eyeCanvas" class="mx-auto border-2 border-blue-200 rounded-lg shadow-md"></canvas>
+
+      <div class="mt-8 w-full">
+        <label for="gazeSlider" class="block text-sm font-medium text-gray-700 mb-1">
+          Gaze Direction (Left <span class="text-xl">&leftrightarrow;</span> Right)
+        </label>
+        <input
+          type="range"
+          id="gazeSlider"
+          min="-1"
+          max="1"
+          step="0.01"
+          value="0"
+          class="w-full h-3 bg-gray-300 rounded-lg appearance-none cursor-pointer accent-blue-500"
+        />
+      </div>
+
+      <div class="mt-6 bg-indigo-50 p-4 rounded-lg shadow text-center">
+        <p class="text-sm font-medium text-indigo-700">Overall Interpupillary Distance (IPD):</p>
+        <p id="overallIPD" class="text-lg font-semibold text-indigo-900">64.0 mm</p>
+      </div>
+
+      <div class="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-4 text-center">
+        <div class="bg-blue-50 p-4 rounded-lg shadow">
+          <p class="text-sm font-medium text-blue-700">Left Pupil to Midline:</p>
+          <p id="leftPupilDistance" class="text-lg font-semibold text-blue-900">32.0 mm</p>
+        </div>
+        <div class="bg-green-50 p-4 rounded-lg shadow">
+          <p class="text-sm font-medium text-green-700">Right Pupil to Midline:</p>
+          <p id="rightPupilDistance" class="text-lg font-semibold text-green-900">32.0 mm</p>
+        </div>
+      </div>
+
+      <div
+        id="gazeDirectionBox"
+        class="mt-6 p-4 rounded-lg shadow text-center transition-all duration-300 ease-in-out"
+      >
+        <p class="text-sm font-medium" id="gazeDirectionLabelText">
+          <span id="gazeWarningIcon" class="text-lg"></span>Estimated Gaze Direction (from
+          distances):
+        </p>
+        <p id="determinedGazeDirection" class="text-lg font-semibold">Center</p>
+      </div>
+    </div>
+
+    <script>
+      document.addEventListener('DOMContentLoaded', () => {
+        const canvas = document.getElementById('eyeCanvas');
+        const ctx = canvas.getContext('2d');
+        const gazeSlider = document.getElementById('gazeSlider');
+        const leftPupilDistanceLabel = document.getElementById('leftPupilDistance');
+        const rightPupilDistanceLabel = document.getElementById('rightPupilDistance');
+
+        const gazeDirectionBox = document.getElementById('gazeDirectionBox');
+        const determinedGazeDirectionLabel = document.getElementById('determinedGazeDirection');
+        const gazeWarningIcon = document.getElementById('gazeWarningIcon');
+        const gazeDirectionLabelTextElement = document.getElementById('gazeDirectionLabelText');
+
+        const overallIPDLabel = document.getElementById('overallIPD');
+        const eyeDataToggle = document.getElementById('eyeDataToggle');
+        const toggleLabel = document.getElementById('toggleLabel');
+
+        let isEyeDataUpdated = true;
+
+        const CANVAS_WIDTH = 360;
+        const CANVAS_HEIGHT = 300;
+        canvas.width = CANVAS_WIDTH;
+        canvas.height = CANVAS_HEIGHT;
+
+        const OVERALL_IPD_MM = 64.0;
+        const DEFAULT_DIST_TO_MIDLINE_MM = OVERALL_IPD_MM / 2;
+        const MAX_GAZE_ANGLE = 45;
+
+        const HEAD_RADIUS_PIXELS = 80;
+        const EYE_RADIUS_PIXELS = 18;
+        const PUPIL_RADIUS_PIXELS = 7;
+        const EYE_SOCKET_SEPARATION_PIXELS = 60;
+        const EYE_VERTICAL_OFFSET_PIXELS = -25;
+        const PUPIL_FORWARD_OFFSET_PIXELS = -5;
+        const MAX_PUPIL_DISPLACEMENT_PIXELS = EYE_RADIUS_PIXELS - PUPIL_RADIUS_PIXELS - 3;
+
+        const PIXELS_TO_MM_SCALE = OVERALL_IPD_MM / EYE_SOCKET_SEPARATION_PIXELS;
+
+        const HEAD_COLOR = '#FFDBAC';
+        const EYE_COLOR = '#FFFFFF';
+        const PUPIL_COLOR = '#1a1a1a';
+        const LINE_COLOR = '#555555';
+        const MIDLINE_COLOR = '#777777';
+        const IPD_LINE_COLOR = '#007bff';
+        const DISTANCE_LINE_COLOR_LEFT = '#28a745';
+        const DISTANCE_LINE_COLOR_RIGHT = '#dc3545';
+        const NOSE_COLOR = '#E0B38A';
+
+        const headCenterX_pixels = CANVAS_WIDTH / 2;
+        const headCenterY_pixels = CANVAS_HEIGHT / 2 + HEAD_RADIUS_PIXELS * 0.3;
+        const eyeSocketsY_pixels = headCenterY_pixels + EYE_VERTICAL_OFFSET_PIXELS;
+        const leftEyeSocketX_pixels = headCenterX_pixels - EYE_SOCKET_SEPARATION_PIXELS / 2;
+        const rightEyeSocketX_pixels = headCenterX_pixels + EYE_SOCKET_SEPARATION_PIXELS / 2;
+        const pupilsY_pixels = eyeSocketsY_pixels + PUPIL_FORWARD_OFFSET_PIXELS;
+
+        const noseTipX_pixels = headCenterX_pixels;
+        const noseTipY_pixels = headCenterY_pixels - HEAD_RADIUS_PIXELS * 0.9;
+        const noseBaseLeftX_pixels = headCenterX_pixels - 7;
+        const noseBaseRightX_pixels = headCenterX_pixels + 7;
+        const noseBaseY_pixels = headCenterY_pixels - HEAD_RADIUS_PIXELS * 0.9 + 20;
+
+        const IPD_LINE_Y_OFFSET = 0;
+        const LEFT_DIST_LINE_Y_OFFSET = 15;
+        const RIGHT_DIST_LINE_Y_OFFSET = -15;
+
+        overallIPDLabel.textContent = `${OVERALL_IPD_MM.toFixed(1)} mm`;
+        eyeDataToggle.checked = isEyeDataUpdated;
+        toggleLabel.textContent = `Eye data updated: ${isEyeDataUpdated ? 'ON' : 'OFF'}`;
+
+        function updateGazeDirectionBoxStyle() {
+          gazeDirectionBox.classList.remove(
+            'bg-red-100',
+            'border-red-400',
+            'text-red-700',
+            'border-2',
+            'bg-purple-50',
+            'text-purple-900',
+            'border-transparent'
+          );
+          gazeDirectionLabelTextElement.classList.remove('text-red-700', 'text-purple-700');
+          determinedGazeDirectionLabel.classList.remove('text-red-900', 'text-purple-900');
+
+          if (isEyeDataUpdated) {
+            gazeDirectionBox.classList.add(
+              'bg-red-100',
+              'border-red-400',
+              'text-red-700',
+              'border-2'
+            );
+            gazeDirectionLabelTextElement.classList.add('text-red-700');
+            determinedGazeDirectionLabel.classList.add('text-red-900');
+            gazeWarningIcon.textContent = '⚠️ ';
+          } else {
+            gazeDirectionBox.classList.add('bg-purple-50', 'border-transparent');
+            gazeDirectionLabelTextElement.classList.add('text-purple-700');
+            determinedGazeDirectionLabel.classList.add('text-purple-900');
+            gazeWarningIcon.textContent = '';
+          }
+        }
+
+        function draw(sliderGazeFactor) {
+          const pupilDisplacementX_pixels = sliderGazeFactor * MAX_PUPIL_DISPLACEMENT_PIXELS;
+          const currentLeftPupilX_pixels = leftEyeSocketX_pixels + pupilDisplacementX_pixels;
+          const currentRightPupilX_pixels = rightEyeSocketX_pixels + pupilDisplacementX_pixels;
+
+          updateGazeDirectionBoxStyle();
+
+          ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+          ctx.beginPath();
+          ctx.arc(headCenterX_pixels, headCenterY_pixels, HEAD_RADIUS_PIXELS, 0, Math.PI * 2);
+          ctx.fillStyle = HEAD_COLOR;
+          ctx.fill();
+          ctx.strokeStyle = LINE_COLOR;
+          ctx.lineWidth = 2;
+          ctx.stroke();
+
+          ctx.beginPath();
+          ctx.moveTo(noseTipX_pixels, noseTipY_pixels);
+          ctx.lineTo(noseBaseLeftX_pixels, noseBaseY_pixels);
+          ctx.lineTo(noseBaseRightX_pixels, noseBaseY_pixels);
+          ctx.closePath();
+          ctx.fillStyle = NOSE_COLOR;
+          ctx.fill();
+          ctx.strokeStyle = LINE_COLOR;
+          ctx.stroke();
+
+          ctx.beginPath();
+          ctx.arc(leftEyeSocketX_pixels, eyeSocketsY_pixels, EYE_RADIUS_PIXELS, 0, Math.PI * 2);
+          ctx.fillStyle = EYE_COLOR;
+          ctx.fill();
+          ctx.strokeStyle = LINE_COLOR;
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.arc(rightEyeSocketX_pixels, eyeSocketsY_pixels, EYE_RADIUS_PIXELS, 0, Math.PI * 2);
+          ctx.fillStyle = EYE_COLOR;
+          ctx.fill();
+          ctx.strokeStyle = LINE_COLOR;
+          ctx.stroke();
+
+          ctx.beginPath();
+          ctx.arc(currentLeftPupilX_pixels, pupilsY_pixels, PUPIL_RADIUS_PIXELS, 0, Math.PI * 2);
+          ctx.fillStyle = PUPIL_COLOR;
+          ctx.fill();
+          ctx.beginPath();
+          ctx.arc(currentRightPupilX_pixels, pupilsY_pixels, PUPIL_RADIUS_PIXELS, 0, Math.PI * 2);
+          ctx.fillStyle = PUPIL_COLOR;
+          ctx.fill();
+
+          ctx.beginPath();
+          ctx.setLineDash([4, 4]);
+          ctx.moveTo(headCenterX_pixels, 0);
+          ctx.lineTo(headCenterX_pixels, CANVAS_HEIGHT);
+          ctx.strokeStyle = MIDLINE_COLOR;
+          ctx.lineWidth = 1;
+          ctx.stroke();
+          ctx.setLineDash([]);
+
+          if (isEyeDataUpdated) {
+            ctx.beginPath();
+            ctx.setLineDash([2, 2]);
+            ctx.moveTo(currentLeftPupilX_pixels, pupilsY_pixels + IPD_LINE_Y_OFFSET);
+            ctx.lineTo(currentRightPupilX_pixels, pupilsY_pixels + IPD_LINE_Y_OFFSET);
+            ctx.strokeStyle = IPD_LINE_COLOR;
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            ctx.beginPath();
+            ctx.setLineDash([2, 2]);
+            ctx.moveTo(headCenterX_pixels, pupilsY_pixels + LEFT_DIST_LINE_Y_OFFSET);
+            ctx.lineTo(currentLeftPupilX_pixels, pupilsY_pixels + LEFT_DIST_LINE_Y_OFFSET);
+            ctx.strokeStyle = DISTANCE_LINE_COLOR_LEFT;
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            ctx.beginPath();
+            ctx.setLineDash([2, 2]);
+            ctx.moveTo(headCenterX_pixels, pupilsY_pixels + RIGHT_DIST_LINE_Y_OFFSET);
+            ctx.lineTo(currentRightPupilX_pixels, pupilsY_pixels + RIGHT_DIST_LINE_Y_OFFSET);
+            ctx.strokeStyle = DISTANCE_LINE_COLOR_RIGHT;
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            const distL_pixels = Math.abs(currentLeftPupilX_pixels - headCenterX_pixels);
+            const distR_pixels = Math.abs(currentRightPupilX_pixels - headCenterX_pixels);
+            const distL_mm = distL_pixels * PIXELS_TO_MM_SCALE;
+            const distR_mm = distR_pixels * PIXELS_TO_MM_SCALE;
+
+            leftPupilDistanceLabel.textContent = `${distL_mm.toFixed(1)} mm`;
+            rightPupilDistanceLabel.textContent = `${distR_mm.toFixed(1)} mm`;
+
+            const angle = Math.abs(sliderGazeFactor) * MAX_GAZE_ANGLE;
+            let directionText = 'Center';
+            const tolerance_mm = 0.1;
+
+            if (distL_mm < distR_mm - tolerance_mm) {
+              directionText = `Right - ${angle.toFixed(0)}°`;
+            } else if (distL_mm > distR_mm + tolerance_mm) {
+              directionText = `Left - ${angle.toFixed(0)}°`;
+            } else {
+              directionText = `Center - ${angle.toFixed(0)}°`;
+            }
+            determinedGazeDirectionLabel.textContent = directionText;
+          } else {
+            leftPupilDistanceLabel.textContent = `${DEFAULT_DIST_TO_MIDLINE_MM.toFixed(1)} mm`;
+            rightPupilDistanceLabel.textContent = `${DEFAULT_DIST_TO_MIDLINE_MM.toFixed(1)} mm`;
+            determinedGazeDirectionLabel.textContent = 'Unknown';
+          }
+        }
+
+        eyeDataToggle.addEventListener('change', (event) => {
+          isEyeDataUpdated = event.target.checked;
+          toggleLabel.textContent = `Eye data updated: ${isEyeDataUpdated ? 'ON' : 'OFF'}`;
+
+          const toggleBg = document.querySelector('.toggle-bg');
+          const toggleDot = document.querySelector('.toggle-dot');
+
+          if (isEyeDataUpdated) {
+            toggleBg.classList.add('checked');
+            toggleDot.classList.add('checked');
+          } else {
+            toggleBg.classList.remove('checked');
+            toggleDot.classList.remove('checked');
+          }
+
+          draw(parseFloat(gazeSlider.value));
+        });
+
+        gazeSlider.addEventListener('input', (event) => {
+          draw(parseFloat(event.target.value));
+        });
+
+        const toggleBg = document.querySelector('.toggle-bg');
+        const toggleDot = document.querySelector('.toggle-dot');
+        if (isEyeDataUpdated) {
+          toggleBg.classList.add('checked');
+          toggleDot.classList.add('checked');
+        }
+
+        draw(parseFloat(gazeSlider.value));
+      });
+    </script>
+  </body>
+</html>
